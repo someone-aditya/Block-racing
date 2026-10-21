@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Block Racing - Godot Style</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Segoe UI', sans-serif;
+            overflow: hidden;
+        }
+        h1 {
+            color: #00d4ff;
+            text-shadow: 0 0 20px #00d4ff;
+            margin-bottom: 10px;
+            font-size: 24px;
+        }
+        #gameCanvas {
+            border: 3px solid #00d4ff;
+            box-shadow: 0 0 30px rgba(0, 212, 255, 0.5);
+            background: #0a0a0a;
+        }
+        #ui {
+            color: #fff;
+            margin-top: 10px;
+            text-align: center;
+        }
+        #score {
+            font-size: 20px;
+            color: #00ff88;
+        }
+        #controls {
+            margin-top: 10px;
+            color: #888;
+            font-size: 14px;
+        }
+        .note {
+            margin-top: 20px;
+            color: #666;
+            font-size: 12px;
+            max-width: 400px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <h1>🏎️ BLOCK RACING</h1>
+    <canvas id="gameCanvas" width="480" height="800"></canvas>
+    <div id="ui">
+        <div id="score">Score: 0</div>
+        <div id="controls">WASD / Arrow Keys to drive</div>
+    </div>
+    <div class="note">
+        This is an HTML5 demo inspired by Godot-style architecture.<br>
+        Check the repository for full Godot 4 project files!
+    </div>
+
+<script>
+// Godot-style Node System
+class Node2D {
+    constructor() {
+        this.position = { x: 0, y: 0 };
+        this.rotation = 0;
+        this.children = [];
+        this.parent = null;
+    }
+    add_child(child) {
+        child.parent = this;
+        this.children.push(child);
+    }
+    _process(delta) {
+        this.children.forEach(c => c._process(delta));
+    }
+    _draw(ctx) {
+        ctx.save();
+        ctx.translate(this.position.x, this.position.y);
+        ctx.rotate(this.rotation);
+        this.draw(ctx);
+        this.children.forEach(c => c._draw(ctx));
+        ctx.restore();
+    }
+    draw(ctx) {}
+}
+
+// Player (CharacterBody2D style)
+class Player extends Node2D {
+    constructor() {
+        super();
+        this.velocity = { x: 0, y: 0 };
+        this.speed = 300;
+        this.steer_speed = 400;
+        this.crashed = false;
+        this.trail = [];
+    }
+    _process(delta) {
+        if (this.crashed) return;
+
+        // Input handling (Godot Input style)
+        const input = { x: 0, y: 0 };
+        if (keys['ArrowLeft'] || keys['a']) input.x = -1;
+        if (keys['ArrowRight'] || keys['d']) input.x = 1;
+        if (keys['ArrowUp'] || keys['w']) input.y = -1;
+        if (keys['ArrowDown'] || keys['s']) input.y = 1;
+
+        // Physics
+        this.velocity.x = input.x * this.steer_speed;
+        this.velocity.y = input.y * this.speed * 0.5;
+
+        this.position.x += this.velocity.x * delta;
+        this.position.y += this.velocity.y * delta;
+
+        // Clamp to road (Godot clamp style)
+        this.position.x = Math.max(90, Math.min(390, this.position.x));
+        this.position.y = Math.max(100, Math.min(750, this.position.y));
+
+        // Tilt effect
+        this.rotation = input.x * 0.15;
+
+        // Trail particles
+        this.trail.push({ x: this.position.x, y: this.position.y + 30, life: 0.5 });
+        this.trail = this.trail.filter(t => { t.life -= delta; return t.life > 0; });
+    }
+    draw(ctx) {
+        // Car body (Godot ColorRect style)
+        ctx.fillStyle = '#00d4ff';
+        ctx.fillRect(-20, -30, 40, 60);
+
+        // Gradient effect
+        const grad = ctx.createLinearGradient(0, -30, 0, 30);
+        grad.addColorStop(0, '#00d4ff');
+        grad.addColorStop(1, '#0088aa');
+        ctx.fillStyle = grad;
+        ctx.fillRect(-20, -30, 40, 60);
+
+        // Headlights
+        ctx.fillStyle = '#ffeeaa';
+        ctx.globalAlpha = 0.8;
+        ctx.fillRect(-15, -35, 8, 5);
+        ctx.fillRect(7, -35, 8, 5);
+        ctx.globalAlpha = 1;
+    }
+    crash() {
+        this.crashed = true;
+    }
+}
+
+// Obstacle (Area2D style)
+class Obstacle extends Node2D {
+    constructor() {
+        super();
+        this.speed = 200;
+        this.rotation_speed = 2;
+    }
+    _process(delta) {
+        this.position.y += this.speed * delta;
+        this.rotation += this.rotation_speed * delta;
+    }
+    draw(ctx) {
+        ctx.save();
+        ctx.rotate(this.rotation);
+
+        // Glow effect
+        ctx.shadowBlur = 20;
+        ctx.shadowColor = '#ff4444';
+
+        // Obstacle body
+        ctx.fillStyle = '#ff4444';
+        ctx.fillRect(-20, -20, 40, 40);
+
+        // Inner detail
+        ctx.fillStyle = '#aa2222';
+        ctx.fillRect(-10, -10, 20, 20);
+
+        ctx.restore();
+    }
+}
+
+// Road (Node2D with scrolling)
+class Road extends Node2D {
+    constructor() {
+        super();
+        this.scroll_y = 0;
+        this.markers = [];
+        for (let i = 0; i < 15; i++) {
+            this.markers.push({ y: i * 80 - 100 });
+        }
+    }
+    _process(delta) {
+        this.scroll_y += 200 * delta;
+        if (this.scroll_y > 80) this.scroll_y -= 80;
+    }
+    draw(ctx) {
+        // Road background
+        ctx.fillStyle = '#1a1a1a';
+        ctx.fillRect(-180, -100, 360, 1000);
+
+        // Lane markers
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+        for (let marker of this.markers) {
+            let y = marker.y + this.scroll_y;
+            if (y > 900) y -= 1000;
+
+            // 3 lanes
+            ctx.fillRect(-60, y, 4, 40);
+            ctx.fillRect(60, y, 4, 40);
+        }
+
+        // Road borders
+        ctx.strokeStyle = '#00d4ff';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(-180, -100);
+        ctx.lineTo(-180, 900);
+        ctx.moveTo(180, -100);
+        ctx.lineTo(180, 900);
+        ctx.stroke();
+    }
+}
+
+// Main Scene (Godot Scene tree style)
+class MainScene {
+    constructor(canvas) {
+        this.canvas = canvas;
+        this.ctx = canvas.getContext('2d');
+        this.root = new Node2D();
+
+        // Create game objects
+        this.road = new Road();
+        this.road.position = { x: 240, y: 400 };
+        this.root.add_child(this.road);
+
+        this.player = new Player();
+        this.player.position = { x: 240, y: 700 };
+        this.root.add_child(this.player);
+
+        this.obstacles = [];
+        this.particles = [];
+
+        // Game state
+        this.score = 0;
+        this.game_running = true;
+        this.spawn_timer = 0;
+        this.difficulty = 1;
+
+        // UI
+        this.score_element = document.getElementById('score');
+    }
+    spawn_obstacle() {
+        const lanes = [120, 200, 280, 360];
+        const obstacle = new Obstacle();
+        obstacle.position = {
+            x: lanes[Math.floor(Math.random() * lanes.length)],
+            y: -50
+        };
+        this.obstacles.push(obstacle);
+        this.root.add_child(obstacle);
+    }
+    check_collision(player, obstacle) {
+        const dx = player.position.x - obstacle.position.x;
+        const dy = player.position.y - obstacle.position.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        return dist < 35;
+    }
+    game_over() {
+        this.game_running = false;
+        this.player.crash();
+    }
+    _process(delta) {
+        if (!this.game_running) return;
+
+        // Update root (processes all children)
+        this.root._process(delta);
+
+        // Spawn obstacles
+        this.spawn_timer += delta;
+        if (this.spawn_timer > Math.max(0.5, 1.5 - this.difficulty * 0.1)) {
+            this.spawn_obstacle();
+            this.spawn_timer = 0;
+        }
+
+        // Update obstacles
+        for (let i = this.obstacles.length - 1; i >= 0; i--) {
+            const obs = this.obstacles[i];
+
+            // Remove off-screen
+            if (obs.position.y > 850) {
+                this.root.children = this.root.children.filter(c => c !== obs);
+                this.obstacles.splice(i, 1);
+                this.score += 10;
+            }
+
+            // Check collision
+            if (this.check_collision(this.player, obs)) {
+                this.game_over();
+            }
+        }
+
+        // Update difficulty
+        this.difficulty = 1 + this.score / 500;
+
+        // Update UI
+        this.score_element.textContent = `Score: ${this.score}`;
+    }
+    _draw() {
+        // Clear
+        this.ctx.fillStyle = '#0a0a0a';
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+        // Draw game tree
+        this.root._draw(this.ctx);
+
+        // Draw particles
+        this.player.trail.forEach(t => {
+            this.ctx.fillStyle = `rgba(200, 200, 255, ${t.life})`;
+            this.ctx.fillRect(t.x - 2, t.y - 2, 4, 4);
+        });
+
+        // Game over overlay
+        if (!this.game_running) {
+            this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+            this.ctx.fillStyle = '#ff4444';
+            this.ctx.font = 'bold 36px Segoe UI';
+            this.ctx.textAlign = 'center';
+            this.ctx.fillText('GAME OVER', 240, 350);
+
+            this.ctx.fillStyle = '#fff';
+            this.ctx.font = '24px Segoe UI';
+            this.ctx.fillText(`Final Score: ${this.score}`, 240, 400);
+
+            this.ctx.fillStyle = '#00d4ff';
+            this.ctx.font = '20px Segoe UI';
+            this.ctx.fillText('Click to restart', 240, 450);
+        }
+    }
+}
+
+// Input handling (Godot InputMap style)
+const keys = {};
+window.addEventListener('keydown', e => keys[e.key] = true);
+window.addEventListener('keyup', e => keys[e.key] = false);
+
+// Game loop (Godot _process style)
+const canvas = document.getElementById('gameCanvas');
+let game = new MainScene(canvas);
+
+// Click to restart
+canvas.addEventListener('click', () => {
+    if (!game.game_running) {
+        game = new MainScene(canvas);
+    }
+});
+
+// Main loop
+let last_time = 0;
+function loop(timestamp) {
+    const delta = (timestamp - last_time) / 1000;
+    last_time = timestamp;
+
+    game._process(delta);
+    game._draw();
+
+    requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
